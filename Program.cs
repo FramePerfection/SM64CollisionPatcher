@@ -58,8 +58,8 @@ namespace SM64CollisionPatcher
 
             //0x11BC8 (offset A4) to 0x408C3C
 
-            var baseROMOffset = 0x01208000;
-            var baseRAMOffset = 0x00408000;
+            var baseROMOffset = 0x01200000;
+            var baseRAMOffset = 0x00400000;
 
 
             if (args.Length < 1)
@@ -103,6 +103,9 @@ namespace SM64CollisionPatcher
                 var toFindWallCollisionsFromList = new byte[4];
                 PutJAL(baseRAMOffset, toFindWallCollisionsFromList, 0);
 
+                if (rom[0xFDD18] != 0x0C || rom[0xFDD18 + 1] != 0x0E || rom[0xFDD18 + 2] != 0x01 || rom[0xFDD18 + 3] != 0xA4)
+                    throw new Exception("The specified ROM already has a different find_wall_collisions_from list method in place.\nThe tweak was likely already applied.\n");
+
                 WriteBytes((byte*)IntPtr.Add(ptr, 0xFDD18), toFindWallCollisionsFromList);
                 WriteBytes((byte*)IntPtr.Add(ptr, 0xFDD68), toFindWallCollisionsFromList);
 
@@ -129,19 +132,21 @@ namespace SM64CollisionPatcher
                 }
 
                 System.IO.File.WriteAllBytes($"{System.IO.Path.GetFileNameWithoutExtension(file)} (better collision).z64", rom);
+                Console.WriteLine($"Wrote 0xFB0 bytes to 0x{baseROMOffset.ToString("X8")}");
             }
             catch (Exception ex)
             {
                 Console.WriteLine(ex.ToString());
+                Console.WriteLine();
                 Console.WriteLine("Failed to patch ROM.");
-                Console.WriteLine("Press any key to exit.");
-                Console.ReadLine();
             }
             finally
             {
                 if (handle != default(GCHandle))
                     handle.Free();
             }
+            Console.WriteLine("Press any key to exit.");
+            Console.ReadLine();
         }
     }
 }
