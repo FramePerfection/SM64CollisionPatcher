@@ -39,8 +39,29 @@ namespace SM64CollisionPatcher
                 original[i] = newBytes[i];
         }
 
+        static void PutJAL(int targetAddress, byte[] target, int offset)
+        {
+            target[offset] = (byte)(0x0C);
+            target[offset + 1] = (byte)(targetAddress >> 0x12);
+            target[offset + 2] = (byte)(targetAddress >> 0x0A);
+            target[offset + 3] = (byte)(targetAddress >> 0x02);
+        }
+
         unsafe static void Main(string[] args)
         {
+            //JALs to self happen at:
+            //0x1208C84 (offset C84) to 0x408900
+            //0x1208C98 (offset C98) to 0x408900
+            //0x1208E9C (offset E9C) to 0x408AD0
+            //0x1208F6C (offset F6C) to 0x408978
+            //0x1208F84 (offset F84) to 0x408978
+
+            //0x11BC8 (offset A4) to 0x408C3C
+
+            var baseROMOffset = 0x01208000;
+            var baseRAMOffset = 0x00408000;
+
+
             if (args.Length < 1)
             {
                 Console.WriteLine("No command line arguments supplied. Please specificy a ROM to apply this patch to.");
@@ -54,25 +75,50 @@ namespace SM64CollisionPatcher
                 var file = args[0].Trim();
                 var rom = System.IO.File.ReadAllBytes(file);
 
+                int startOfFreeSpace;
+                bool hasSpace = false;
+                for (startOfFreeSpace = 0; startOfFreeSpace < 0x7000; startOfFreeSpace += 0x10)
+                {
+                    for (int k = 0; k < 0xFB0; k++)
+                        if (rom[baseROMOffset + startOfFreeSpace + k] != 0x01)
+                            goto notGood;
+                    hasSpace = true;
+                    break;
+                notGood:;
+                }
+                if (!hasSpace)
+                    throw new Exception("Not enough space available to apply the patch. Abort.");
+                baseROMOffset += startOfFreeSpace;
+                baseRAMOffset += startOfFreeSpace;
+
+                PutJAL(baseRAMOffset + 0xC3C, perform_air_step, 0xA4);
+                PutJAL(baseRAMOffset + 0x900, perform_air_step_methods, 0xC84 - 0x900);
+                PutJAL(baseRAMOffset + 0x900, perform_air_step_methods, 0xC98 - 0x900);
+                PutJAL(baseRAMOffset + 0xAD0, perform_air_step_methods, 0xE9C - 0x900);
+                PutJAL(baseRAMOffset + 0x978, perform_air_step_methods, 0xF6C - 0x900);
+                PutJAL(baseRAMOffset + 0x978, perform_air_step_methods, 0xF84 - 0x900);
+
                 handle = GCHandle.Alloc(rom);
                 var ptr = Marshal.UnsafeAddrOfPinnedArrayElement(rom, 0);
+                var toFindWallCollisionsFromList = new byte[4];
+                PutJAL(baseRAMOffset, toFindWallCollisionsFromList, 0);
 
-                WriteBytes((byte*)IntPtr.Add(ptr, 0xFDD18), new byte[] { 0x0C, 0x10, 0x20, 0x00 });
-                WriteBytes((byte*)IntPtr.Add(ptr, 0xFDD68), new byte[] { 0x0C, 0x10, 0x20, 0x00 });
+                WriteBytes((byte*)IntPtr.Add(ptr, 0xFDD18), toFindWallCollisionsFromList);
+                WriteBytes((byte*)IntPtr.Add(ptr, 0xFDD68), toFindWallCollisionsFromList);
 
                 if (CompareBytes((byte*)IntPtr.Add(ptr, 0xFD428), new byte[] { 0x3C, 0x14, 0x40, 0x80, 0x44, 0x94, 0xA0, 0x00 }))
                 {
                     WriteBytes((byte*)IntPtr.Add(ptr, 0xFD428), new byte[] { 0x3C, 0x01, 0x40, 0x80, 0x44, 0x81, 0xA0, 0x00 });
                     WriteBytes((byte*)IntPtr.Add(ptr, 0xFDAD0), new byte[] { 0x3C, 0x01, 0x40, 0x80, 0x44, 0x81, 0xA0, 0x00 });
                     WriteBytes((byte*)IntPtr.Add(ptr, 0xFDD88), new byte[] { 0x00, 0x00, 0x20, 0x25, 0x0C, 0x0E, 0x01, 0xA4, 0x8F, 0xA5, 0x00, 0x38 });
-                    WriteBytes((byte*)IntPtr.Add(ptr, 0x1208000), find_wall_collisions_from_list_ext_bounds);
+                    WriteBytes((byte*)IntPtr.Add(ptr, baseROMOffset), find_wall_collisions_from_list_ext_bounds);
                 }
                 else
                 {
-                    WriteBytes((byte*)IntPtr.Add(ptr, 0x1208000), find_wall_collisions_from_list_regular_bounds);
+                    WriteBytes((byte*)IntPtr.Add(ptr, baseROMOffset), find_wall_collisions_from_list_regular_bounds);
                 }
 
-                WriteBytes((byte*)IntPtr.Add(ptr, 0x1208900), perform_air_step_methods);
+                WriteBytes((byte*)IntPtr.Add(ptr, baseROMOffset + 0x900), perform_air_step_methods);
                 WriteBytes((byte*)IntPtr.Add(ptr, 0x11B24), perform_air_step);
 
                 ulong crc;
@@ -84,8 +130,9 @@ namespace SM64CollisionPatcher
 
                 System.IO.File.WriteAllBytes($"{System.IO.Path.GetFileNameWithoutExtension(file)} (better collision).z64", rom);
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine(ex.ToString());
                 Console.WriteLine("Failed to patch ROM.");
                 Console.WriteLine("Press any key to exit.");
                 Console.ReadLine();
