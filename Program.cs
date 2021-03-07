@@ -67,7 +67,7 @@ namespace SM64CollisionPatcher
         {
             var baseROMOffset = 0x01200000;
             var baseRAMOffset = 0x00400000;
-            
+
             if (args.Length < 1)
             {
                 Console.WriteLine("No command line arguments supplied. Please specificy a ROM to apply this patch to.");
@@ -81,6 +81,52 @@ namespace SM64CollisionPatcher
                 var anomalyBuilder = new System.Text.StringBuilder();
                 var file = args[0].Trim();
                 var rom = System.IO.File.ReadAllBytes(file);
+
+                handle = GCHandle.Alloc(rom);
+                var ptr = Marshal.UnsafeAddrOfPinnedArrayElement(rom, 0);
+
+                var toFindWallCollisionsFromList = new byte[4];
+                PutJAL(baseRAMOffset, toFindWallCollisionsFromList, 0);
+
+                bool hasCalls = true;
+                //0xFDD18 is the expected first instance of JAL to find_wall_collisions_from_list (0xFDD68 is usually the second).
+                //Some hacks have this JAL in a slightly different location (Kaze's optimized collision patch?)
+                //Therefore search the vicinity for JALs to this function and replace those...
+                var callers = new System.Collections.Generic.List<int>();
+                var searchStart = 0xFDD18; //expected first instance of JAL to find_wall_collisions_from_list
+                for (int i = 0; i < 0x400; i += 4)
+                {
+                    var here = searchStart + i;
+                    if (here == 0xFDD8C)
+                        continue; //Ignore the instance from the ext band-aid fix if the patch was applied already
+                    if (rom[here] == 0x0C && rom[here + 1] == 0x0E && rom[here + 2] == 0x01 && rom[here + 3] == 0xA4)
+                        callers.Add(here);
+                }
+                for (int i = 4; i < 0x400; i += 4)
+                {
+                    var here = searchStart - i;
+                    if (rom[here] == 0x0C && rom[here + 1] == 0x0E && rom[here + 2] == 0x01 && rom[here + 3] == 0xA4)
+                        callers.Add(here);
+                }
+
+                //If no callers to find_wall_collision_from_list were found, assume that the method has previously been replaced already.
+                //This may, for instanced, be caused by trying to apply the patch to an already patched ROM.
+                foreach (var caller in callers)
+                {
+                    WriteBytes((byte*)IntPtr.Add(ptr, caller), toFindWallCollisionsFromList);
+                    Console.WriteLine($"Wrote JAL to new find_wall_collisions_from_list subroutine at {caller.ToString("X")} (0x4 bytes)");
+                    if (caller != 0xFDD18 && caller != 0xFDD68)
+                        anomalyBuilder.AppendLine($"JAL to find_wall_collisions_from_list at {caller.ToString("X")} is non-standard");
+                }
+
+                if (!(hasCalls = callers.Count > 0))
+                {
+                    anomalyBuilder.AppendLine($"No calls to original find_wall_collisions_from_list found. This may be because the tweak was applied before.");
+                    anomalyBuilder.AppendLine($"New subroutines will not be applied.");
+                }
+                else if (callers.Count != 2)
+                    anomalyBuilder.AppendLine($"There were {callers.Count} calls to find_wall_collisions_from_list found instead of 2");
+
 
                 //Find free space in frauber space (0x1200000 - 0x1210000)
                 int startOfFreeSpace;
@@ -106,47 +152,7 @@ namespace SM64CollisionPatcher
                 PutJAL(baseRAMOffset + 0xAD0, perform_air_step_methods, 0xE9C - 0x900);
                 PutJAL(baseRAMOffset + 0x978, perform_air_step_methods, 0xF6C - 0x900);
                 PutJAL(baseRAMOffset + 0x978, perform_air_step_methods, 0xF84 - 0x900);
-
-                handle = GCHandle.Alloc(rom);
-                var ptr = Marshal.UnsafeAddrOfPinnedArrayElement(rom, 0);
-                var toFindWallCollisionsFromList = new byte[4];
-                PutJAL(baseRAMOffset, toFindWallCollisionsFromList, 0);
-
-                var callers = new System.Collections.Generic.List<int>();
-
-                //0xFDD18 is the expected first instance of JAL to find_wall_collisions_from_list (0xFDD68 is usually the second).
-                //Some hacks have this JAL in a slightly different location (Kaze's optimized collision patch?)
-                //Therefore search the vicinity for JALs to this function and replace those...
-                var searchStart = 0xFDD18; //expected first instance of JAL to find_wall_collisions_from_list
-                for (int i = 0; i < 0x400; i += 4)
-                {
-                    var here = searchStart + i;
-                    if (rom[here] == 0x0C && rom[here + 1] == 0x0E && rom[here + 2] == 0x01 && rom[here + 3] == 0xA4)
-                        callers.Add(here);
-                }
-                for (int i = 4; i < 0x400; i += 4)
-                {
-                    var here = searchStart - i;
-                    if (rom[here] == 0x0C && rom[here + 1] == 0x0E && rom[here + 2] == 0x01 && rom[here + 3] == 0xA4)
-                        callers.Add(here);
-                }
-
-                //If no callers to find_wall_collision_from_list were found, assume that the method has previously been replaced already.
-                //This may, for instanced, be caused by trying to apply the patch to an already patched ROM.
-                if (callers.Count == 0)
-                    throw new Exception("The specified ROM already has a different find_wall_collisions_from_list method in place.\nThe tweak was likely already applied.\n");
-                else
-                    foreach (var caller in callers)
-                    {
-                        WriteBytes((byte*)IntPtr.Add(ptr, caller), toFindWallCollisionsFromList);
-                        Console.WriteLine($"Wrote JAL to new find_wall_collisions_from_list subroutine at {caller.ToString("X")} (0x4 bytes)");
-                        if (caller != 0xFDD18 && caller != 0xFDD68)
-                            anomalyBuilder.AppendLine($"JAL to find_wall_collisions_from_list at {caller.ToString("X")} is non-standard");
-                    }
-                if (callers.Count != 2)
-                    anomalyBuilder.AppendLine($"There were {callers.Count} calls to find_wall_collisions_from_list found instead of 2");
-
-
+                
                 bool extBoundaries = false;
                 //Extended boundaries patch uses the S4 register illegally. This breaks the new collision routine.
                 //The fix uses AT instead - however the illegal usage is not present in both locations in all ROMs. Cool.
@@ -165,33 +171,36 @@ namespace SM64CollisionPatcher
                     extBoundaries = true;
                 }
 
-                if (extBoundaries)
+                if (hasCalls)
                 {
-                    //If the extended boundaries patch has been detected, patch the find_wall_collisions_from_list function for extended boundaries in.
-                    //For some reason, the camera does not like to work now, so this band-aid patch does an additional 
-                    //call to the old find_wall_collisions_from_list with an empty list, because that fixes it somehow... (probably ext boundaries related again...)
-                    WriteBytes((byte*)IntPtr.Add(ptr, 0xFDD88), new byte[] { 0x00, 0x00, 0x20, 0x25, 0x0C, 0x0E, 0x01, 0xA4, 0x8F, 0xA5, 0x00, 0x38 });
-                    Console.WriteLine($"Applied a band-aid fix to repair camera on ext-boundaries ROMs that is needed for an unknown reason at 0xFDD88 (0xC bytes)");
+                    if (extBoundaries)
+                    {
+                        //If the extended boundaries patch has been detected, patch the find_wall_collisions_from_list function for extended boundaries in.
+                        //For some reason, the camera does not like to work now, so this band-aid patch does an additional 
+                        //call to the old find_wall_collisions_from_list with an empty list, because that fixes it somehow... (probably ext boundaries related again...)
+                        WriteBytes((byte*)IntPtr.Add(ptr, 0xFDD88), new byte[] { 0x00, 0x00, 0x20, 0x25, 0x0C, 0x0E, 0x01, 0xA4, 0x8F, 0xA5, 0x00, 0x38 });
+                        Console.WriteLine($"Applied a band-aid fix to repair camera on ext-boundaries ROMs that is needed for an unknown reason at 0xFDD88 (0xC bytes)");
 
-                    WriteBytes((byte*)IntPtr.Add(ptr, baseROMOffset), find_wall_collisions_from_list_ext_bounds);
-                    Console.WriteLine($"New find_wall_collisons_from_list function for extended boundaries written to {baseROMOffset.ToString("X")} ({find_wall_collisions_from_list_ext_bounds.Length.ToString("X")} bytes)");
+                        WriteBytes((byte*)IntPtr.Add(ptr, baseROMOffset), find_wall_collisions_from_list_ext_bounds);
+                        Console.WriteLine($"New find_wall_collisons_from_list function for extended boundaries written to {baseROMOffset.ToString("X")} ({find_wall_collisions_from_list_ext_bounds.Length.ToString("X")} bytes)");
+                    }
+                    else
+                    {
+                        //If no extended boundaries patch has been detected, patch the find_wall_collisions_from_list function for regular boundaries in.
+                        WriteBytes((byte*)IntPtr.Add(ptr, baseROMOffset), find_wall_collisions_from_list_regular_bounds);
+                        Console.WriteLine($"New find_wall_collisons_from_list function for regular boundaries written to {baseROMOffset.ToString("X")} ({find_wall_collisions_from_list_regular_bounds.Length.ToString("X")} bytes)");
+                    }
+
+                    //Write the changed methods referenced by perform_air_step.
+                    //Since these methods are now more complex than before, they do not fit in their original location.
+                    //Therefore, they must be moved into frauber-space.
+                    WriteBytes((byte*)IntPtr.Add(ptr, baseROMOffset + 0x900), perform_air_step_methods);
+                    Console.WriteLine($"New perform_air_step dependencies written to {(baseROMOffset + 0x900).ToString("X")} ({perform_air_step_methods.Length.ToString("X")} bytes)");
+
+                    //Write the new perform_air_step method at its original location.
+                    WriteBytes((byte*)IntPtr.Add(ptr, 0x11B24), perform_air_step);
+                    Console.WriteLine($"New perform_air_step function written at 0x11B24 ({perform_air_step.Length.ToString("X")} bytes)");
                 }
-                else
-                {
-                    //If no extended boundaries patch has been detected, patch the find_wall_collisions_from_list function for regular boundaries in.
-                    WriteBytes((byte*)IntPtr.Add(ptr, baseROMOffset), find_wall_collisions_from_list_regular_bounds);
-                    Console.WriteLine($"New find_wall_collisons_from_list function for regular boundaries written to {baseROMOffset.ToString("X")} ({find_wall_collisions_from_list_regular_bounds.Length.ToString("X")} bytes)");
-                }
-
-                //Write the changed methods referenced by perform_air_step.
-                //Since these methods are now more complex than before, they do not fit in their original location.
-                //Therefore, they must be moved into frauber-space.
-                WriteBytes((byte*)IntPtr.Add(ptr, baseROMOffset + 0x900), perform_air_step_methods);
-                Console.WriteLine($"New perform_air_step dependencies written to {(baseROMOffset + 0x900).ToString("X")} ({perform_air_step_methods.Length.ToString("X")} bytes)");
-
-                //Write the new perform_air_step method at its original location.
-                WriteBytes((byte*)IntPtr.Add(ptr, 0x11B24), perform_air_step);
-                Console.WriteLine($"New perform_air_step function written at 0x11B24 ({perform_air_step.Length.ToString("X")} bytes)");
 
                 //check_ledge_climb_down relies on finding a wall triangle under Mario.
                 //Since this tweak removes the backside of wall triangles, this will now typically fail.
