@@ -189,14 +189,14 @@ namespace SM64CollisionPatcher
 
                         WriteBytes((byte*)IntPtr.Add(ptr, baseROMOffset), find_wall_collisions_from_list_ext_bounds);
                         Console.WriteLine($"New find_wall_collisons_from_list function for extended boundaries written to {baseROMOffset.ToString("X")} ({find_wall_collisions_from_list_ext_bounds.Length.ToString("X")} bytes)");
-                        Console.WriteLine($"Wallkick angles are located at {(baseROMOffset + offsetExtBounds1).ToString("X")} and {(baseROMOffset + offsetExtBounds1).ToString("X")}");
+                        Console.WriteLine($"Wallkick angles are located at {(baseROMOffset + offsetExtBounds1).ToString("X")} and {(baseROMOffset + offsetExtBounds2).ToString("X")}");
                     }
                     else
                     {
                         //If no extended boundaries patch has been detected, patch the find_wall_collisions_from_list function for regular boundaries in.
                         WriteBytes((byte*)IntPtr.Add(ptr, baseROMOffset), find_wall_collisions_from_list_regular_bounds);
                         Console.WriteLine($"New find_wall_collisons_from_list function for regular boundaries written to {baseROMOffset.ToString("X")} ({find_wall_collisions_from_list_regular_bounds.Length.ToString("X")} bytes)");
-                        Console.WriteLine($"Wallkick angles are located at {(baseROMOffset + offsetRegularBounds1).ToString("X")} and {(baseROMOffset + offsetRegularBounds1).ToString("X")}");
+                        Console.WriteLine($"Wallkick angles are located at {(baseROMOffset + offsetRegularBounds1).ToString("X")} and {(baseROMOffset + offsetRegularBounds2).ToString("X")}");
                     }
 
                     //Write the changed methods referenced by perform_air_step.
