@@ -68,6 +68,12 @@ namespace SM64CollisionPatcher
             var baseROMOffset = 0x01200000;
             var baseRAMOffset = 0x00400000;
 
+            var offsetRegularBounds1 = 0x40A6 - 0x3650;
+            var offsetRegularBounds2 = 0x40B6 - 0x3650;
+
+            var offsetExtBounds1 = 0x5FF6 - 0x5590;
+            int offsetExtBounds2 = 0x5FE6 - 0x5590;
+
             if (args.Length < 1)
             {
                 Console.WriteLine("No command line arguments supplied. Please specificy a ROM to apply this patch to.");
@@ -84,7 +90,24 @@ namespace SM64CollisionPatcher
 
                 handle = GCHandle.Alloc(rom);
                 var ptr = Marshal.UnsafeAddrOfPinnedArrayElement(rom, 0);
-
+                
+                //Find free space in frauber space (0x1200000 - 0x1210000)
+                int startOfFreeSpace;
+                bool hasSpace = false;
+                for (startOfFreeSpace = 0; startOfFreeSpace < 0xF000; startOfFreeSpace += 0x10)
+                {
+                    for (int k = 0; k < 0xFB0; k++)
+                        if (rom[baseROMOffset + startOfFreeSpace + k] != 0x01)
+                            goto notGood;
+                    hasSpace = true;
+                    break;
+                notGood:;
+                }
+                if (!hasSpace)
+                    throw new Exception("Not enough space available to apply the patch. Abort.");
+                baseROMOffset += startOfFreeSpace;
+                baseRAMOffset += startOfFreeSpace;
+                
                 var toFindWallCollisionsFromList = new byte[4];
                 PutJAL(baseRAMOffset, toFindWallCollisionsFromList, 0);
 
@@ -128,23 +151,6 @@ namespace SM64CollisionPatcher
                     anomalyBuilder.AppendLine($"There were {callers.Count} calls to find_wall_collisions_from_list found instead of 2");
 
 
-                //Find free space in frauber space (0x1200000 - 0x1210000)
-                int startOfFreeSpace;
-                bool hasSpace = false;
-                for (startOfFreeSpace = 0; startOfFreeSpace < 0xF000; startOfFreeSpace += 0x10)
-                {
-                    for (int k = 0; k < 0xFB0; k++)
-                        if (rom[baseROMOffset + startOfFreeSpace + k] != 0x01)
-                            goto notGood;
-                    hasSpace = true;
-                    break;
-                notGood:;
-                }
-                if (!hasSpace)
-                    throw new Exception("Not enough space available to apply the patch. Abort.");
-                baseROMOffset += startOfFreeSpace;
-                baseRAMOffset += startOfFreeSpace;
-
                 //Update JALs in the new methods to point to correct location
                 PutJAL(baseRAMOffset + 0xC3C, perform_air_step, 0xA4);
                 PutJAL(baseRAMOffset + 0x900, perform_air_step_methods, 0xC84 - 0x900);
@@ -152,7 +158,7 @@ namespace SM64CollisionPatcher
                 PutJAL(baseRAMOffset + 0xAD0, perform_air_step_methods, 0xE9C - 0x900);
                 PutJAL(baseRAMOffset + 0x978, perform_air_step_methods, 0xF6C - 0x900);
                 PutJAL(baseRAMOffset + 0x978, perform_air_step_methods, 0xF84 - 0x900);
-                
+
                 bool extBoundaries = false;
                 //Extended boundaries patch uses the S4 register illegally. This breaks the new collision routine.
                 //The fix uses AT instead - however the illegal usage is not present in both locations in all ROMs. Cool.
@@ -183,12 +189,14 @@ namespace SM64CollisionPatcher
 
                         WriteBytes((byte*)IntPtr.Add(ptr, baseROMOffset), find_wall_collisions_from_list_ext_bounds);
                         Console.WriteLine($"New find_wall_collisons_from_list function for extended boundaries written to {baseROMOffset.ToString("X")} ({find_wall_collisions_from_list_ext_bounds.Length.ToString("X")} bytes)");
+                        Console.WriteLine($"Wallkick angles are located at {(baseROMOffset + offsetExtBounds1).ToString("X")} and {(baseROMOffset + offsetExtBounds1).ToString("X")}");
                     }
                     else
                     {
                         //If no extended boundaries patch has been detected, patch the find_wall_collisions_from_list function for regular boundaries in.
                         WriteBytes((byte*)IntPtr.Add(ptr, baseROMOffset), find_wall_collisions_from_list_regular_bounds);
                         Console.WriteLine($"New find_wall_collisons_from_list function for regular boundaries written to {baseROMOffset.ToString("X")} ({find_wall_collisions_from_list_regular_bounds.Length.ToString("X")} bytes)");
+                        Console.WriteLine($"Wallkick angles are located at {(baseROMOffset + offsetRegularBounds1).ToString("X")} and {(baseROMOffset + offsetRegularBounds1).ToString("X")}");
                     }
 
                     //Write the changed methods referenced by perform_air_step.
